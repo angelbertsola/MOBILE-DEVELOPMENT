@@ -1,13 +1,13 @@
-package com.is6144.musicapp;
+package com.sodastudio.jun.spotify_demo;
 
 import android.media.MediaPlayer;
-// I have created an instance to access the media player from anywhere
+
 public class MyMediaPlayer {
     static MediaPlayer instance;
 
     public static MediaPlayer getInstance(){
-        if (instance == null){
-            instance =new MediaPlayer();
+        if(instance == null){
+            instance = new MediaPlayer();
         }
         return instance;
     }

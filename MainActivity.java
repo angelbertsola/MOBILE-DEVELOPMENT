@@ -1,88 +1,177 @@
-package com.is6144.musicapp;
+package com.sodastudio.jun.spotify_demo;
 
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
-
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.database.Cursor;
+import android.app.FragmentManager;
+//import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
-import android.provider.MediaStore;
-import android.view.View;
-import android.widget.TextView;
+import android.util.Log;
 import android.widget.Toast;
 
-import java.io.File;
-import java.util.ArrayList;
+import androidx.appcompat.app.AppCompatActivity;
 
-public class MainActivity extends AppCompatActivity {
+import com.sodastudio.jun.spotify_demo.manager.PlaybackManager;
+import com.sodastudio.jun.spotify_demo.manager.SearchPager;
+import com.sodastudio.jun.spotify_demo.ui.MainFragment;
+import com.spotify.sdk.android.player.Config;
+import com.spotify.sdk.android.player.ConnectionStateCallback;
+import com.spotify.sdk.android.player.Error;
+import com.spotify.sdk.android.player.PlaybackState;
+import com.spotify.sdk.android.player.Spotify;
+import com.spotify.sdk.android.player.SpotifyPlayer;
 
-    RecyclerView recyclerView;
-    TextView noMusicTextView;
-    ArrayList<Audio> songsList = new ArrayList<>();
+import kaaes.spotify.webapi.android.SpotifyApi;
+import kaaes.spotify.webapi.android.SpotifyService;
+
+public class MainActivity extends AppCompatActivity
+    implements ConnectionStateCallback
+{
+
+    private static final String TAG = "Spotify MainActivity";
+
+
+    //Fields
+
+    public static SpotifyPlayer mPlayer;
+    public static PlaybackState mCurrentPlaybackState;
+
+    private Toast mToast;
+
+    private String AUTH_TOKEN;
+
+    public static SpotifyService spotifyService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        recyclerView = findViewById(R.id.recycler_view);
-        noMusicTextView = findViewById(R.id.no_songs_text);
+        FragmentManager manager = getFragmentManager();
+        manager.beginTransaction().replace( R.id.fragment_container, new MainFragment()).commit();
 
-        if(checkPermission() == false){
-            requestPermission();
-            return;
-        }
+        AUTH_TOKEN = getIntent().getStringExtra(SpotifyLoginActivity.AUTH_TOKEN);
 
-        String[] projection = {
-                MediaStore.Audio.Media.TITLE,
-                MediaStore.Audio.Media.DATA,
-                MediaStore.Audio.Media.DURATION
-        };
+        onAuthenticationComplete(AUTH_TOKEN);
 
-        String selection = MediaStore.Audio.Media.IS_MUSIC +" != 0";
+    }
 
-        Cursor cursor = getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,projection,selection,null,null);
-        while(cursor.moveToNext()){
-            Audio songData = new Audio(cursor.getString(1),cursor.getString(0),cursor.getString(2));
-            if(new File(songData.getPath()).exists())
-                songsList.add(songData);
-        }
+    private void onAuthenticationComplete(final String auth_token) {
 
-        if(songsList.size()==0){
-            noMusicTextView.setVisibility(View.VISIBLE);
-        }else{
-            //recyclerview
-            recyclerView.setLayoutManager(new LinearLayoutManager(this));
-            recyclerView.setAdapter(new MusicAdapter(songsList,getApplicationContext()));
+        Log.d(TAG,"Got authentication token");
+
+        if(mPlayer == null)
+        {
+            Config playerConfig = new Config(this, auth_token, SpotifyLoginActivity.CLIENT_ID);
+
+            Spotify.getPlayer(playerConfig, this, new SpotifyPlayer.InitializationObserver() {
+                @Override
+                public void onInitialized(SpotifyPlayer spotifyPlayer) {
+                    Log.d(TAG,"-- Player initialized --");
+                    mPlayer = spotifyPlayer;
+                    mPlayer.addConnectionStateCallback(MainActivity.this);
+                    //mPlayer.addNotificationCallback(MainActivity.this);
+
+                    Log.d(TAG, "AccessToken: " + auth_token);
+
+                    // Set API
+                    setServiceAPI();
+                }
+
+                @Override
+                public void onError(Throwable throwable) {
+                    Log.e(TAG, "Could not initialize player: " + throwable.getMessage());
+                }
+            });
+        } else {
+            mPlayer.login(auth_token);
         }
 
     }
 
-    boolean checkPermission(){
-        int result = ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.READ_EXTERNAL_STORAGE);
-        if(result == PackageManager.PERMISSION_GRANTED){
-            return true;
-        }else{
-            return false;
-        }
+    private void setServiceAPI(){
+        Log.d(TAG, "Setting Spotify API Service");
+        SpotifyApi api = new SpotifyApi();
+        api.setAccessToken(AUTH_TOKEN);
+
+        spotifyService = api.getService();
     }
 
-    void requestPermission(){
-        if(ActivityCompat.shouldShowRequestPermissionRationale(MainActivity.this,Manifest.permission.READ_EXTERNAL_STORAGE)){
-            Toast.makeText(MainActivity.this,"READ PERMISSION IS REQUIRED,PLEASE ALLOW FROM SETTINGS",Toast.LENGTH_SHORT).show();
-        }else
-            ActivityCompat.requestPermissions(MainActivity.this,new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},123);
+
+    //Events of the UI
+
+
+    private boolean isLoggedIn() {
+        return mPlayer != null && mPlayer.isLoggedIn();
+    }
+
+
+    private void showToast(String text) {
+        if (mToast != null) {
+            mToast.cancel();
+        }
+        mToast = Toast.makeText(this, text, Toast.LENGTH_SHORT);
+        mToast.show();
+    }
+
+
+    //
+
+    @Override
+    public void onLoggedIn() {
+        Log.d(TAG, "User logged in");
+        //showToast("Login Success!");
+
+        SearchPager.getInstance(this).getNewRelease(null);
+        SearchPager.getInstance(this).getMyTopTracks(null);
+        SearchPager.getInstance(this).getFeatured();
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        if(recyclerView!=null){
-            recyclerView.setAdapter(new MusicAdapter(songsList,getApplicationContext()));
+    public void onLoggedOut() {
+        Log.d(TAG, "User logged out");
+    }
+
+    @Override
+    public void onLoginFailed(Error error) {
+        Log.d(TAG, "Login failed");
+        showToast("Login failed. You need Spotify Premium to use the app.");
+    }
+
+    @Override
+    public void onTemporaryError() {
+        Log.d(TAG, "Temporary error occurred");
+    }
+
+    @Override
+    public void onConnectionMessage(String message) {
+        Log.d(TAG, "Received connection message: " + message);
+    }
+
+
+    //Destruction
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        if (mPlayer != null) {
+            //mPlayer.removeNotificationCallback(MainActivity.this);
+            mPlayer.removeConnectionStateCallback(MainActivity.this);
         }
     }
+
+    @Override
+    protected void onDestroy() {
+        Log.d(TAG, "onDestroy");
+        Spotify.destroyPlayer(this);
+        super.onDestroy();
+    }
+
+
+    @Override
+    public void onBackPressed() {
+        super.onBackPressed();
+
+        PlaybackManager playbackManager = PlaybackManager.getInstance();
+        playbackManager.setSearchResultFragmentAdded(false);
+    }
 }
+
